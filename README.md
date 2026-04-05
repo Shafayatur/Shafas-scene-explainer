@@ -38,7 +38,7 @@ HF_API_KEY=your_huggingface_token
 ▶️ Run the App
 streamlit run app.py
 🌐 Live Demo
-(Add your deployed Streamlit link here)
+https://shafas-scene-explainer-3tbpuqxnhfb4jcwuu9jhng.streamlit.app/
 🎯 Use Cases
 Visual scene understanding
 Accessibility tools for visually impaired users
