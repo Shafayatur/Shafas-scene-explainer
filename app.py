@@ -1,16 +1,13 @@
 import streamlit as st
 import requests
 from PIL import Image, ImageDraw
-from dotenv import load_dotenv
 import os
 import time
 
 # 🔐 Load environment variables
-load_dotenv()
-
-KEY = os.getenv("AZURE_KEY")
-ENDPOINT = os.getenv("AZURE_ENDPOINT")
-HF_API_KEY = os.getenv("HF_API_KEY")
+KEY = st.secrets["AZURE_KEY"]
+ENDPOINT = st.secrets["AZURE_ENDPOINT"]
+HF_API_KEY = st.secrets["HF_API_KEY"]
 
 # 🎯 Streamlit config
 st.set_page_config(page_title="Shafa's Scene Explainer")
