@@ -3,11 +3,18 @@ import requests
 from PIL import Image, ImageDraw
 import os
 import time
+from dotenv import load_dotenv
+from groq import Groq
 
 # 🔐 Load environment variables
-KEY = st.secrets["AZURE_KEY"]
-ENDPOINT = st.secrets["AZURE_ENDPOINT"]
-HF_API_KEY = st.secrets["HF_API_KEY"]
+load_dotenv()
+
+KEY = os.getenv("AZURE_KEY")
+ENDPOINT = os.getenv("AZURE_ENDPOINT")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Initialize Groq client
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # 🎯 Streamlit config
 st.set_page_config(page_title="Shafa's Scene Explainer")
@@ -57,42 +64,57 @@ def extract_text(image_bytes):
 
 
 # 🧠 Prompt Builder
-def build_prompt(caption, objects, text):
-    return f"""
-Scene: {caption}
-Objects: {", ".join(objects) if objects else "none"}
-Text: {", ".join(text) if text else "none"}
+def build_prompt(caption, objects, text, question):
+    return f"""You are an AI assistant analyzing an image. Here's what you know about the image:
 
-Answer clearly.
-"""
+Scene Description: {caption}
+Detected Objects: {", ".join(objects) if objects else "none"}
+Detected Text: {", ".join(text) if text else "none"}
+
+Question: {question}
+
+Please provide a clear, concise answer based on the information above."""
 
 
-# 🤖 HuggingFace LLM
-def ask_hf(prompt, question):
-    API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
-
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-
-    payload = {
-        "inputs": prompt + "\nQuestion: " + question,
-        "parameters": {"max_new_tokens": 100}
-    }
-
-    for _ in range(3):
-        response = requests.post(API_URL, headers=headers, json=payload)
-        result = response.json()
-
-        if isinstance(result, dict) and "error" in result:
-            time.sleep(5)
-            continue
-
-        try:
-            return result[0]["generated_text"]
-        except:
-            return "Could not generate answer."
-
-    return "Model busy. Try again."
-
+# 🤖 Groq LLM Function
+def ask_groq(prompt_data, question):
+    try:
+        full_prompt = build_prompt(prompt_data['caption'], prompt_data['objects'], prompt_data['text'], question)
+        
+        # Groq API endpoint
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
+                },
+                {
+                    "role": "user",
+                    "content": full_prompt
+                }
+            ],
+            "model": "llama-3.3-70b-versatile",  # Updated model
+            "temperature": 0.7,
+            "max_tokens": 500
+        }
+        
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            return f"API Error: {response.status_code} - {response.text}"
+    
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 # 🚀 MAIN LOGIC
 if file:
@@ -157,12 +179,16 @@ if file:
     if text_output:
         explanation += "Text: " + ", ".join(text_output[:3])
 
-    # 🤖 LLM
+    # 🤖 LLM with Groq
     answer = None
     if user_question:
-        with st.spinner("Thinking..."):
-            prompt = build_prompt(caption_text, unique_objects, text_output)
-            answer = ask_hf(prompt, user_question)
+        with st.spinner("Thinking with Groq..."):
+            prompt_data = {
+                'caption': caption_text,
+                'objects': unique_objects,
+                'text': text_output
+            }
+            answer = ask_groq(prompt_data, user_question)
 
     # 🎨 UI
     col1, col2 = st.columns([1.3, 1])
