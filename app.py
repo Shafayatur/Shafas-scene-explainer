@@ -13,14 +13,14 @@ KEY = os.getenv("AZURE_KEY")
 ENDPOINT = os.getenv("AZURE_ENDPOINT")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Try to import Ollama (local only)
+# Try to import Ollama (local fallback)
 try:
     import ollama
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
 
-# Initialize Groq client (cloud fallback)
+# Initialize Groq client (primary)
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # 🎯 Streamlit config
@@ -83,31 +83,11 @@ Question: {question}
 Please provide a clear, concise answer based on the information above."""
 
 
-# 🤖 LLM Function with Fallback (Ollama → Groq)
+# 🤖 LLM Function with Fallback (Groq → Ollama)
 def ask_llm(prompt_data, question):
     full_prompt = build_prompt(prompt_data['caption'], prompt_data['objects'], prompt_data['text'], question)
     
-    # Try Ollama first (local)
-    if OLLAMA_AVAILABLE:
-        try:
-            response = ollama.chat(
-                model='llama3.2',
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
-                    },
-                    {
-                        "role": "user",
-                        "content": full_prompt
-                    }
-                ]
-            )
-            return response['message']['content'], "Ollama (local)"
-        except Exception as e:
-            st.warning(f"Ollama failed: {str(e)}. Falling back to Groq...")
-    
-    # Fallback to Groq (cloud)
+    # Try Groq first (cloud - has tokens)
     if groq_client:
         try:
             chat_completion = groq_client.chat.completions.create(
@@ -127,9 +107,29 @@ def ask_llm(prompt_data, question):
             )
             return chat_completion.choices[0].message.content, "Groq (cloud)"
         except Exception as e:
+            st.warning(f"Groq failed (possibly out of tokens): {str(e)}. Falling back to Ollama...")
+    
+    # Fallback to Ollama (local)
+    if OLLAMA_AVAILABLE:
+        try:
+            response = ollama.chat(
+                model='llama3.2',
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
+                    },
+                    {
+                        "role": "user",
+                        "content": full_prompt
+                    }
+                ]
+            )
+            return response['message']['content'], "Ollama (local fallback)"
+        except Exception as e:
             return f"Error: {str(e)}", "None"
     else:
-        return "No LLM available. Please install Ollama locally or set GROQ_API_KEY.", "None"
+        return "No LLM available. Please set GROQ_API_KEY or install Ollama locally.", "None"
 
 
 # 🚀 MAIN LOGIC
@@ -195,7 +195,7 @@ if file:
     if text_output:
         explanation += "Text: " + ", ".join(text_output[:3])
 
-    # 🤖 LLM with fallback
+    # 🤖 LLM with fallback (Groq first, then Ollama)
     answer = None
     llm_source = None
     if user_question:
