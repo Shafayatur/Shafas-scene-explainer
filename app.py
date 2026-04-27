@@ -13,8 +13,15 @@ KEY = os.getenv("AZURE_KEY")
 ENDPOINT = os.getenv("AZURE_ENDPOINT")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Initialize Groq client
-groq_client = Groq(api_key=GROQ_API_KEY)
+# Try to import Ollama (local only)
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+
+# Initialize Groq client (cloud fallback)
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # 🎯 Streamlit config
 st.set_page_config(page_title="Shafa's Scene Explainer")
@@ -76,45 +83,54 @@ Question: {question}
 Please provide a clear, concise answer based on the information above."""
 
 
-# 🤖 Groq LLM Function
-def ask_groq(prompt_data, question):
-    try:
-        full_prompt = build_prompt(prompt_data['caption'], prompt_data['objects'], prompt_data['text'], question)
-        
-        # Groq API endpoint
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
-                },
-                {
-                    "role": "user",
-                    "content": full_prompt
-                }
-            ],
-            "model": "llama-3.3-70b-versatile",  # Updated model
-            "temperature": 0.7,
-            "max_tokens": 500
-        }
-        
-        response = requests.post(url, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content']
-        else:
-            return f"API Error: {response.status_code} - {response.text}"
+# 🤖 LLM Function with Fallback (Ollama → Groq)
+def ask_llm(prompt_data, question):
+    full_prompt = build_prompt(prompt_data['caption'], prompt_data['objects'], prompt_data['text'], question)
     
-    except Exception as e:
-        return f"Error: {str(e)}"
+    # Try Ollama first (local)
+    if OLLAMA_AVAILABLE:
+        try:
+            response = ollama.chat(
+                model='llama3.2',
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
+                    },
+                    {
+                        "role": "user",
+                        "content": full_prompt
+                    }
+                ]
+            )
+            return response['message']['content'], "Ollama (local)"
+        except Exception as e:
+            st.warning(f"Ollama failed: {str(e)}. Falling back to Groq...")
+    
+    # Fallback to Groq (cloud)
+    if groq_client:
+        try:
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that analyzes image descriptions and answers questions about them."
+                    },
+                    {
+                        "role": "user",
+                        "content": full_prompt
+                    }
+                ],
+                model="llama-3.3-70b-versatile",
+                temperature=0.7,
+                max_tokens=500
+            )
+            return chat_completion.choices[0].message.content, "Groq (cloud)"
+        except Exception as e:
+            return f"Error: {str(e)}", "None"
+    else:
+        return "No LLM available. Please install Ollama locally or set GROQ_API_KEY.", "None"
+
 
 # 🚀 MAIN LOGIC
 if file:
@@ -179,16 +195,16 @@ if file:
     if text_output:
         explanation += "Text: " + ", ".join(text_output[:3])
 
-    # 🤖 LLM with Groq
+    # 🤖 LLM with fallback
     answer = None
+    llm_source = None
     if user_question:
-        with st.spinner("Thinking with Groq..."):
-            prompt_data = {
+        with st.spinner("Thinking..."):
+            answer, llm_source = ask_llm({
                 'caption': caption_text,
                 'objects': unique_objects,
                 'text': text_output
-            }
-            answer = ask_groq(prompt_data, user_question)
+            }, user_question)
 
     # 🎨 UI
     col1, col2 = st.columns([1.3, 1])
@@ -199,6 +215,8 @@ if file:
     with col2:
         st.subheader("Quick Summary")
         st.write(caption_text)
+        if llm_source:
+            st.caption(f"🤖 Using: {llm_source}")
 
     st.markdown("---")
 
